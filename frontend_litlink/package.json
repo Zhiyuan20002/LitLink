@@ -1,0 +1,26 @@
+{
+  "name": "frontlink",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc -b && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@ant-design/icons-vue": "^7.0.1",
+    "ant-design-vue": "^4.2.5",
+    "vue": "^3.5.10",
+    "vue-loader": "^17.4.2",
+    "vue-pdf-embed": "^1.2.1",
+    "vue-template-compiler": "^0.1.0",
+    "vue3-pdfjs": "^0.1.6"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.1.4",
+    "typescript": "^5.5.3",
+    "vite": "^5.4.8",
+    "vue-tsc": "^2.1.6"
+  }
+}
