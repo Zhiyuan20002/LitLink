@@ -1,108 +1,87 @@
+import uuid
+from django.utils import timezone
 from django.db import models
-from django.contrib.auth.models import User
+from django.db.models import JSONField
 
-# 句子类型（如：高亮，理解，翻译，思考）
-class SentenceType(models.Model):
-    name = models.CharField(max_length=50)
+
+# 用户信息表
+class User(models.Model):
+    username = models.CharField(max_length=255, unique=True)
+    avatar_url = models.URLField(max_length=500, blank=True, null=True)
+
+    def __str__(self):
+        return self.username
+
+
+class PdfDocument(models.Model):
+    paper_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=255)
+    detail = models.TextField()
+    summary = models.TextField(blank=True)
+    pdf_file = models.FileField(upload_to='paper_file/', blank=True, null=True)  # 文件存储字段
+    num_pages = models.IntegerField(blank=True, null=True)
+    create_time = models.DateTimeField(default=timezone.now)
 
     def __str__(self):
         return self.name
 
-# 难易程度（如：简单，一般，困难）
-class DifficultyLevel(models.Model):
-    level = models.CharField(max_length=50)
+
+# 文档高亮内容表
+class Highlight(models.Model):
+    pdf_document = models.ForeignKey(PdfDocument, on_delete=models.CASCADE, related_name="highlights")
+    page_number = models.IntegerField()  # 高亮所在的页码
+    highlighted_text = models.TextField()  # 高亮的文本内容
+    start_offset = models.IntegerField()  # 文本层的高亮起始点
+    end_offset = models.IntegerField()  # 文本层的高亮结束点
 
     def __str__(self):
-        return self.level
+        return f"Highlight on page {self.page_number} of {self.pdf_document.name}"
 
-# 领域分类（如：Machine Learning, Data Mining, Quantum Computing）
-class Topic(models.Model):
-    name = models.CharField(max_length=100)
 
-    def __str__(self):
-        return self.name
-
-# 关键词标签（如：Deep Learning, Neural Networks, Encryption）
-class Tag(models.Model):
-    name = models.CharField(max_length=100)
-
-    def __str__(self):
-        return self.name
-
-# 情感分类（如：Positive, Negative, Neutral）
-class Sentiment(models.Model):
-    label = models.CharField(max_length=50)
-
-    def __str__(self):
-        return self.label
-
-# 句子功能分类（如：Introduction, Hypothesis, Data Presentation, Conclusion）
-class SentenceFunction(models.Model):
-    label = models.CharField(max_length=50)
-
-    def __str__(self):
-        return self.label
-
-# 参考来源（引用的文献或其他资料来源）
-class Source(models.Model):
-    title = models.CharField(max_length=200)
-    author = models.CharField(max_length=100)
-    publication_date = models.DateField()
-
-    def __str__(self):
-        return f"{self.title} by {self.author}"
-
-# 语言分类（如：English, French, Chinese）
-class Language(models.Model):
-    name = models.CharField(max_length=50)
-
-    def __str__(self):
-        return self.name
-
-# 句子模型，扩展了多个分类
-class Sentence(models.Model):
-    user = models.ForeignKey(User, on_delete=models.CASCADE)  # 句子由哪个用户创建
-    content = models.TextField()  # 句子内容
-    filename = models.CharField(max_length=255, null=True, blank=True)
-    sentence_type = models.ForeignKey(SentenceType, on_delete=models.SET_NULL, null=True)  # 句子类型
-    difficulty = models.ForeignKey(DifficultyLevel, on_delete=models.SET_NULL, null=True)  # 难易程度
-    topic = models.ForeignKey(Topic, on_delete=models.SET_NULL, null=True)  # 领域分类
-    tags = models.ManyToManyField(Tag, blank=True)  # 关键词标签（多对多）
-    sentiment = models.ForeignKey(Sentiment, on_delete=models.SET_NULL, null=True)  # 情感分类
-    sentence_function = models.ForeignKey(SentenceFunction, on_delete=models.SET_NULL, null=True)  # 句子功能分类
-    source = models.ForeignKey(Source, on_delete=models.SET_NULL, null=True)  # 引用来源
-    language = models.ForeignKey(Language, on_delete=models.SET_NULL, null=True)  # 语言分类
-    created_at = models.DateTimeField(auto_now_add=True)  # 创建时间
-
-    def __str__(self):
-        return self.content[:50]  # 返回句子的前50个字符
-
-# 笔记模型，记录用户针对句子的笔记内容
-class Note(models.Model):
-    sentence = models.ForeignKey(Sentence, on_delete=models.CASCADE, related_name='notes')  # 关联句子
-    content = models.TextField()  # 笔记内容
-    created_at = models.DateTimeField(auto_now_add=True)  # 笔记创建时间
-    weight = models.FloatField(default=0)  # 笔记的权重，默认为0，用于推荐系统
-
-    def __str__(self):
-        return self.content[:50]
-
-# 用户行为模型，记录用户针对笔记的行为（查看、点赞、收藏）
-class UserAction(models.Model):
-    ACTION_CHOICES = [
-        ('view', 'View'),        # 查看行为
-        ('like', 'Like'),        # 点赞行为
-        ('favorite', 'Favorite') # 收藏行为
+# 学习卡片信息表
+class FlashCard(models.Model):
+    STATUS_CHOICES = [
+        ('TO_READ', 'TO_READ'),
+        ('READING', 'READING'),
+        ('UNDERSTAND', 'UNDERSTAND'),
+        ('REVIEW', 'REVIEW'),
+        ('KEY_POINT', 'KEY_POINT'),
+        ('APPLY', 'APPLY'),
+        ('TO_DISCUSS', 'TO_DISCUSS'),
     ]
 
-    user = models.ForeignKey(User, on_delete=models.CASCADE)  # 用户
-    note = models.ForeignKey(Note, on_delete=models.CASCADE)  # 针对的笔记
-    action_type = models.CharField(max_length=10, choices=ACTION_CHOICES)  # 行为类型
-    timestamp = models.DateTimeField(auto_now_add=True)  # 行为发生时间
+    flashcard_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    pdf_document = models.ForeignKey(PdfDocument, on_delete=models.CASCADE, related_name="flashcards")
+    title = models.CharField(max_length=255)
+    content = models.TextField()
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES)
+    highlight_by = models.CharField(max_length=255)  # This can also be a ForeignKey to User if needed
+    notes = models.TextField(blank=True)
+    ai_analysis = models.TextField(blank=True)
+    related_to = JSONField(blank=True, null=True)  # 存储列表，列表中的内容为关联的Flashcard的flashcard_id
+    feature_data = JSONField(blank=True, null=True)  # 用于存储特征向量
 
     def __str__(self):
-        return f'{self.user.username} {self.action_type} {self.note.id}'
-    
+        return self.title
 
 
+# 群聊信息表
+class ChatMessage(models.Model):
+    message_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    from_user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="messages")
+    pdf_document = models.ForeignKey(PdfDocument, on_delete=models.CASCADE, related_name="chat_messages")  # 关联的文档
+    content = JSONField()  # 使用 JSON 格式存储消息内容
+    timestamp = models.DateTimeField(auto_now_add=True)
 
+    def __str__(self):
+        return f"Message from {self.from_user} in document {self.pdf_document.name} at {self.timestamp}"
+
+
+# AI 助手信息表
+class Agent(models.Model):
+    name = models.CharField(max_length=255)
+    details = models.TextField(blank=True)
+    avatar_url = models.URLField(max_length=500, blank=True, null=True)
+
+    def __str__(self):
+        return self.name

@@ -7,7 +7,8 @@ import PaperPage from './components/PaperPage.vue'
   <a-config-provider
       :theme="{
       token: {
-        colorPrimary: '#556B2F',
+        colorPrimary: '#5A54F9',
+        // #191970
       },
     }"
   >

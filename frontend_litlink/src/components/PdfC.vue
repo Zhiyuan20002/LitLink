@@ -1,6 +1,6 @@
 <template>
   <div class="pdf-container" ref="pdfContainer" @scroll="handleScroll">
-    <div class="pdf-wrap" :style="pdfWrapStyle">
+    <div class="pdf-wrap">
       <vue-pdf-embed
           v-for="page in totalPages"
           :source="state.source"
@@ -38,19 +38,24 @@ import {
   HighlightOutlined,
 } from '@ant-design/icons-vue';
 
-import {watch, reactive, onMounted, computed, ref, nextTick} from "vue";
+import {reactive, onMounted, ref} from "vue";
 import VuePdfEmbed from "vue-pdf-embed";
 import {createLoadingTask} from "vue3-pdfjs";
+// 引入 pdfjs 库和 worker 文件
+import * as pdfjsLib from 'pdfjs-dist';
+
+// 设置 PDF.js 使用 Web Worker
+pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
 const props = defineProps({
-  pdfUrl: {
-    type: String,
+  chosenPaper: {
+    type: Object,
     required: true,
   },
 });
 
 const state = reactive({
-  source: props.pdfUrl, // PDF 文件 URL
+  source: props.chosenPaper.pdfUrl, // PDF 文件 URL
   pageNum: 1, // 当前页码
   scale: 1, // 缩放比例
   numPages: 0, // 总页数
@@ -109,59 +114,90 @@ function applyHighlight() {
 
 function highlightSelectedText(selection: Selection) {
   const textLayer = pdfContainer.value?.querySelector(".textLayer");
-  if (textLayer) {
-    const range = selection.getRangeAt(0); // 获取用户选择的文本范围
-    const spans = textLayer.querySelectorAll("span"); // 获取文本层中的所有 span
+  if (!textLayer) return;
 
-    let highlighting = false;
+  const range = selection.getRangeAt(0);
+  const spans = Array.from(textLayer.querySelectorAll("span"));
 
-    spans.forEach((span) => {
-      const spanRange = document.createRange();
-      spanRange.selectNodeContents(span);
+  let highlighting = false;
+  let combinedText = ""; // 存储组合的高亮文本
+  const highlightedTexts: { pageNum: number; text: string }[] = []; // 存储高亮文本信息
 
-      if (range.intersectsNode(span)) {
-        highlighting = true;
-        const spanText = span.textContent || "";
+  // 创建转义特殊符号的函数
+  const escapeHTML = (text: string) => {
+    return text
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+  };
 
-        if (span === range.startContainer.parentNode) {
-          const startIndex = range.startOffset;
-          const highlightText = spanText.substring(startIndex);
+  // 构建一个批量更新的高亮 HTML 映射，键为 span，值为修改后的内容
+  const spanHTMLMap = new Map<HTMLElement, string>();
 
-          state.highlightedTexts.push({
-            pageNum: state.pageNum,
-            text: highlightText.trim(),
-          });
+  for (const span of spans) {
+    if (!range.intersectsNode(span)) continue;
 
-          span.innerHTML = spanText.replace(
-              highlightText,
-              `<span class="highlight">${highlightText}</span>`
-          );
-        } else if (span === range.endContainer.parentNode) {
-          const endIndex = range.endOffset;
-          const highlightText = spanText.substring(0, endIndex);
+    const spanText = span.textContent || "";
 
-          state.combine.push(highlightText.trim());
-          state.highlightedTexts.push({
-            pageNum: state.pageNum,
-            text: highlightText.trim(),
-          });
+    if (span === range.startContainer.parentNode) {
+      const startIndex = range.startOffset;
+      const highlightText = spanText.substring(startIndex);
 
-          span.innerHTML = spanText.replace(
-              highlightText,
-              `<span class="highlight">${highlightText}</span>`
-          );
-          highlighting = false;
-        } else if (highlighting) {
-          state.combine.push(spanText.trim());
-          state.highlightedTexts.push({
-            pageNum: state.pageNum,
-            text: spanText.trim(),
-          });
-          span.innerHTML = `<span class="highlight">${spanText}</span>`;
-        }
-      }
-    });
+      highlightedTexts.push({
+        pageNum: state.pageNum,
+        text: highlightText.trim(),
+      });
+
+      combinedText += highlightText.trim() + " ";
+      spanHTMLMap.set(
+          span,
+          escapeHTML(spanText).replace(
+              escapeHTML(highlightText),
+              `<span class="highlight">${escapeHTML(highlightText)}</span>`
+          )
+      );
+
+      highlighting = true;
+    } else if (span === range.endContainer.parentNode) {
+      const endIndex = range.endOffset;
+      const highlightText = spanText.substring(0, endIndex);
+
+      combinedText += highlightText.trim();
+      highlightedTexts.push({
+        pageNum: state.pageNum,
+        text: highlightText.trim(),
+      });
+
+      spanHTMLMap.set(
+          span,
+          escapeHTML(spanText).replace(
+              escapeHTML(highlightText),
+              `<span class="highlight">${escapeHTML(highlightText)}</span>`
+          )
+      );
+
+      highlighting = false;
+      break; // 结束循环，避免多余的遍历
+    } else if (highlighting) {
+      combinedText += spanText.trim() + " ";
+      highlightedTexts.push({
+        pageNum: state.pageNum,
+        text: spanText.trim(),
+      });
+      spanHTMLMap.set(span, `<span class="highlight">${escapeHTML(spanText)}</span>`);
+    }
   }
+
+  // 批量更新 DOM，减少对 innerHTML 的多次操作
+  spanHTMLMap.forEach((html, span) => {
+    span.innerHTML = html;
+  });
+
+  // 一次性更新状态，减少频繁访问
+  state.combine.push(combinedText.trim());
+  state.highlightedTexts.push(...highlightedTexts);
 }
 
 </script>
@@ -171,6 +207,7 @@ function highlightSelectedText(selection: Selection) {
 .pdf-container {
   height: 100%;
   overflow: auto;
+  border-radius: 8px;
 }
 
 .pdf-wrap {

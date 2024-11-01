@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import {ref} from 'vue';
+import {PropType, ref} from 'vue';
 import {SendOutlined} from '@ant-design/icons-vue';
 import zhipuaiLogo from '../assets/zhipuai.svg';
 import openaiLogo from '../assets/openai.svg';
-import litlinkLogo from '../assets/logo.png';
+import litlinkLogo from '../assets/litlink_ai_logo.png';
 import claudeLogo from '../assets/claude.svg';
 
 const messages = ref([
@@ -21,26 +21,33 @@ const messages = ref([
   }
 ]);
 
+const props = defineProps({
+  avatarUrl: {
+    type: String as PropType<string>,
+    required: true,
+  }
+});
+
 const avatar_info = ref([
   {
     name: 'user',
-    avatar: 'https://robohash.org/random.png'
+    avatar: props.avatarUrl,
   },
   {
     name: 'ChatGLM',
-    avatar: zhipuaiLogo
+    avatar: zhipuaiLogo,
   },
   {
     name: 'ChatGPT',
-    avatar: openaiLogo
+    avatar: openaiLogo,
   },
   {
     name: 'LitLink AI',
-    avatar: litlinkLogo
+    avatar: litlinkLogo,
   },
   {
     name: 'Claude',
-    avatar: claudeLogo
+    avatar: claudeLogo,
   }
 ]);
 
@@ -80,7 +87,7 @@ function addAgentToMessage(agentName: string) {
           v-for="(message, index) in messages"
           :key="index"
           :class="['message', message.from === 'user' ? 'user-message' : 'ai-message']">
-        <a-avatar :src="avatar_info.find(agent => agent.name === message.from)?.avatar"/>
+        <a-avatar :src="avatar_info.find(agent => agent.name === message.from)?.avatar" shape="circle"/>
         <div class="message-content">
           {{ message.text }}
         </div>
@@ -90,7 +97,7 @@ function addAgentToMessage(agentName: string) {
     <!-- Message Input -->
     <div class="message-input">
       <a-input-group compact>
-        <a-input v-model:value="newMessage" placeholder="Enter your message here..."
+        <a-input v-model:value="newMessage" placeholder="Starting a conversation with the author of the paper..."
                  style="width: calc(100% - 120px)"/>
         <a-button type="primary" style="width: 120px">
           <SendOutlined/>
@@ -129,7 +136,7 @@ function addAgentToMessage(agentName: string) {
   height: 68vh;
   overflow-y: auto;
   background: #f7f7f7;
-  border-radius: 12px;
+  border-radius: 8px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   margin-bottom: 10px;
 }
@@ -161,7 +168,7 @@ function addAgentToMessage(agentName: string) {
 }
 
 .user-message .message-content {
-  background-color: #556B2F;
+  background-color: #5A54F9;
   color: white;
   text-align: right;
 }
