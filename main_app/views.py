@@ -1,6 +1,8 @@
 import json
 import uuid
 import os
+import copy
+from django.utils import timezone
 from uuid import UUID
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
@@ -11,8 +13,9 @@ from django.core.files.storage import default_storage
 from django.http import StreamingHttpResponse
 import fitz
 from . import llm_process
-from .models import PdfDocument, FlashCard
+from .models import PdfDocument, FlashCard, User, ChatMessage
 from django.shortcuts import get_object_or_404
+from django.utils.decorators import sync_and_async_middleware
 
 
 @csrf_exempt
@@ -225,11 +228,11 @@ def get_summary_and_flashcards(request, paper_id):
                 'number': str(history_card.flashcard_id),
                 'title': history_card.title,
                 'content': history_card.content,
-                'Status': history_card.status,
+                'status': history_card.status,
                 'highlightBy': history_card.highlight_by,
                 'Notes': history_card.notes,
                 'AIAnalysis': history_card.ai_analysis,
-                'relatedTo': history_card.related_to,
+                'relatedTo': history_card.pdf_document.name,
                 'pdfUrl': os.path.join("http://localhost:8000", "media", "paper_file",
                                        str(history_card.pdf_document.pdf_file)),
             }
@@ -336,11 +339,11 @@ def back_all_flashcards(pdf_document, all_related_to):
             'number': history_card.flashcard_id,
             'title': history_card.title,
             'content': history_card.content,
-            'Status': history_card.status,
+            'status': history_card.status,
             'highlightBy': history_card.highlight_by,
             'Notes': history_card.notes,
             'AIAnalysis': history_card.ai_analysis,
-            'relatedTo': history_card.related_to,
+            'relatedTo': history_card.pdf_document.name,
             'pdfUrl': os.path.join("http://localhost:8000", "media", "paper_file",
                                    str(history_card.pdf_document.pdf_file)),
         }
@@ -451,4 +454,118 @@ def update_flashcard(request):
         flashcard.save()
 
         return JsonResponse({'status': 'success', 'message': 'Flashcard updated successfully.'}, status=200)
+    return JsonResponse({'error': 'Invalid request method'}, status=400)
+
+
+@csrf_exempt
+def send_message(request):
+    if request.method == 'POST':
+        data = json.loads(request.body)
+        message_text = data.get('messages')
+        document_id = data.get('document_id')
+        agent = data.get('agent')
+
+        pdf_document = PdfDocument.objects.get(paper_id=document_id)
+        file_name = pdf_document.pdf_file
+        file_path = os.path.join(settings.MEDIA_ROOT, 'paper_file', str(file_name))
+        flashcards = FlashCard.objects.filter(pdf_document=pdf_document)
+        flashcards_data = [
+            {
+                'title': card.title,
+                'content': card.content,
+                'status': card.status,
+                'notes': card.notes,
+                'ai_analysis': card.ai_analysis,
+            }
+            for card in flashcards
+        ]
+        user = User.objects.get(username="you")  # Example user; modify for actual authentication
+
+        user_message = {
+            'role': 'user',
+            'content': message_text,
+        }
+
+        # 获取或创建消息记录
+        chat_message, created = ChatMessage.objects.get_or_create(
+            pdf_document=pdf_document,
+            from_user=user,
+            defaults={'content': [user_message], 'timestamp': timezone.now()}
+        )
+
+        if not created:
+            chat_message.content.append(user_message)
+            chat_message.timestamp = timezone.now()
+            chat_message.save()
+
+        # 准备传给 AI 的消息上下文
+        all_content = copy.deepcopy(chat_message.content)
+        print(f"INFO: All content: {all_content}")
+        # 将content中所有的非user角色消息的名称替换为system并把新的消息内容存储到all_content中
+        for contents in all_content:
+            if contents['role'] != 'user':
+                contents['role'] = 'system'
+
+        print(f"INFO: New content: {chat_message.content}")
+
+        ai_response_content = ""
+
+        # 流式生成 AI 响应
+        def ai_response_generator():
+            nonlocal ai_response_content
+            for response_chunk in llm_process.chat_with_ai(all_content, agent, file_path, flashcards_data):
+                ai_response_content += response_chunk
+                yield response_chunk
+
+            ai_message = {'role': agent, 'content': ai_response_content}
+            chat_message.content.append(ai_message)
+            chat_message.timestamp = timezone.now()
+            chat_message.save()
+            print(f"{chat_message.content}")
+
+        response = StreamingHttpResponse(ai_response_generator(), content_type="text/event-stream")
+        response['Cache-Control'] = 'no-cache'
+
+        return response
+
+    return JsonResponse({'error': 'Invalid request method'}, status=400)
+
+
+@csrf_exempt
+def load_message(request):
+    if request.method == 'POST':
+        data = json.loads(request.body)
+        document_id = data.get('document_id')
+
+        # 获取 PDF 文档实例
+        pdf_document = PdfDocument.objects.get(paper_id=document_id)
+
+        # 检查是否已有聊天记录
+        try:
+            chat_message = ChatMessage.objects.filter(pdf_document=pdf_document).order_by('timestamp').last()
+            messages = chat_message.content if chat_message else []
+            return JsonResponse({'messages': messages}, status=200)
+        except PdfDocument.DoesNotExist:
+            return JsonResponse({'messages': []}, status=200)
+
+    return JsonResponse({'error': 'Invalid request method'}, status=400)
+
+
+@csrf_exempt
+def clear_messages(request):
+    if request.method == 'POST':
+        data = json.loads(request.body)
+        document_id = data.get('document_id')
+
+        # 获取 PDF 文档实例
+        pdf_document = PdfDocument.objects.get(paper_id=document_id)
+
+        # 删除聊天记录
+        try:
+            chat_message = ChatMessage.objects.filter(pdf_document=pdf_document)
+            chat_message.delete()
+            return JsonResponse({'message': 'Messages cleared successfully'}, status=200)
+        except PdfDocument.DoesNotExist:
+            return JsonResponse({'error': 'Document not found'}, status=404)
+
     return JsonResponse({'error': 'Invalid request method'}, status=400)

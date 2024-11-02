@@ -88,7 +88,7 @@ onMounted(async () => {
         number: card.flashcard_id,
         title: card.title,
         content: card.content,
-        Status: card.status,
+        status: card.status,
         highlightBy: card.highlight_by,
         Notes: card.notes,
         AIAnalysis: card.ai_analysis,
@@ -102,11 +102,11 @@ onMounted(async () => {
             number: historyItem.number,
             title: historyItem.title,
             content: historyItem.content,
-            Status: historyItem.status,
+            status: historyItem.status,
             highlightBy: historyItem.highlight_by,
             Notes: historyItem.notes,
             AIAnalysis: historyItem.ai_analysis,
-            relatedTo: historyItem.related_to,
+            relatedTo: historyItem.relatedTo,
             pdfNo: historyItem.pdfUrl,
           }))
           : [];
@@ -171,7 +171,7 @@ const generateFlashcards = async () => {
         number: card.flashcard_id,
         title: card.title,
         content: card.content,
-        Status: card.status,
+        status: card.status,
         highlightBy: card.highlight_by,
         Notes: card.notes,
         AIAnalysis: card.ai_analysis,
@@ -188,7 +188,7 @@ const generateFlashcards = async () => {
         number: historyItem.number,
         title: historyItem.title,
         content: historyItem.content,
-        Status: historyItem.Status,
+        status: historyItem.status,
         highlightBy: historyItem.highlightBy,
         Notes: historyItem.Notes,
         AIAnalysis: historyItem.AIAnalysis,
@@ -262,6 +262,8 @@ const updateFlashcard = async (flashcardId, status, note, ai_analysis) => {
   }
 };
 
+
+
 </script>
 
 <template>
@@ -297,9 +299,9 @@ const updateFlashcard = async (flashcardId, status, note, ai_analysis) => {
               width="200">
             <template #title>
               <a-select
-                  v-model:value="item.Status"
+                  v-model:value="item.status"
                   :options="options"
-                  @change="updateFlashcard(item.number, item.Status, item.Notes, item.AIAnalysis)"
+                  @change="updateFlashcard(item.number, item.status, item.Notes, item.AIAnalysis)"
                   style="width: 120px">
                 <template #suffixIcon>
                   <SmileOutlined class="ant-select-suffix"/>
@@ -307,9 +309,9 @@ const updateFlashcard = async (flashcardId, status, note, ai_analysis) => {
               </a-select>
             </template>
             <a-tag
-                :color="options.find(option => option.value === item.Status)?.color"
+                :color="options.find(option => option.value === item.status)?.color"
                 style="width: 120px; text-align: center">
-              {{ item.Status }}
+              {{ item.status }}
             </a-tag>
           </a-popconfirm>
           <a-popconfirm title="Sure to delete?" @confirm="deleteFlashcard(item.number)">
@@ -368,11 +370,13 @@ const updateFlashcard = async (flashcardId, status, note, ai_analysis) => {
               class="history-panel">
             <template #extra>
               <a-popconfirm
+                  :showCancel="false"
                   width="200">
                 <template #title>
                   <a-select
-                      v-model:value="historyItem.Status"
+                      v-model:value="historyItem.status"
                       :options="options"
+                      @change="updateFlashcard(historyItem.number, historyItem.status, historyItem.Notes, historyItem.AIAnalysis)"
                       style="width: 120px">
                     <template #suffixIcon>
                       <SmileOutlined class="ant-select-suffix"/>
@@ -380,9 +384,9 @@ const updateFlashcard = async (flashcardId, status, note, ai_analysis) => {
                   </a-select>
                 </template>
                 <a-tag
-                    :color="options.find(option => option.value === historyItem.Status)?.color"
+                    :color="options.find(option => option.value === historyItem.status)?.color"
                     style="width: 120px; text-align: center">
-                  {{ historyItem.Status }}
+                  {{ historyItem.status }}
                 </a-tag>
               </a-popconfirm>
             </template>
@@ -394,12 +398,12 @@ const updateFlashcard = async (flashcardId, status, note, ai_analysis) => {
             <div style="margin: 8px 0 8px 2px; display: flex; justify-content: space-between; align-items: center;">
               <div>
                 <PaperClipOutlined/>
-                <!--                {{ historyItem.relatedTo }}-->
+                {{ historyItem.relatedTo }}
               </div>
-              <a-button type="text" style="color: #5A54F9">
-                <BookOutlined/>
-                Open This Paper
-              </a-button>
+<!--              <a-button type="text" style="color: #5A54F9">-->
+<!--                <BookOutlined/>-->
+<!--                Open This Paper-->
+<!--              </a-button>-->
             </div>
 
             <div style="margin-top: 16px">

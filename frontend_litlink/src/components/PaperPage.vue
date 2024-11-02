@@ -661,7 +661,7 @@ const cancelUpload = async () => {
                     Chat with the Author
                   </template>
                   <div class="tab_content">
-                    <GroupChat :avatarUrl="avatarUrl"/>
+                    <GroupChat :avatarUrl="avatarUrl" :chosenPaper="chosenPaper"/>
                   </div>
                 </a-tab-pane>
               </a-tabs>
@@ -784,15 +784,15 @@ const cancelUpload = async () => {
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   padding: 0 15px 10px 15px;
-  border-radius: 12px;
+  border-radius: 8px;
   height: 92vh;
   font-weight: bold;
 }
 
 .tab_content {
-  height: 83vh;
+  height: 84vh;
   overflow: auto;
-  border-radius: 12px;
+  border-radius: 8px;
   font-weight: normal;
 }
 

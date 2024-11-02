@@ -70,7 +70,7 @@ class ChatMessage(models.Model):
     message_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     from_user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="messages")
     pdf_document = models.ForeignKey(PdfDocument, on_delete=models.CASCADE, related_name="chat_messages")  # 关联的文档
-    content = JSONField()  # 使用 JSON 格式存储消息内容
+    content = JSONField()  # 使用 JSON 列表格式存储消息，包含 role 和 content 字段
     timestamp = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

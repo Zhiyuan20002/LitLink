@@ -200,6 +200,13 @@ function highlightSelectedText(selection: Selection) {
   state.highlightedTexts.push(...highlightedTexts);
 }
 
+// 卡片前后端功能
+// 新高亮内容
+const newHighlight = ref('');
+
+// 先在前端push到state的highlight中向后端发送保存高亮请求，后端保存高亮并根据高亮新建学习卡片，然后刷新flashcard界面的卡片内容
+
+
 </script>
 
 <style scoped>

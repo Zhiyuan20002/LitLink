@@ -19,6 +19,9 @@ urlpatterns = [
     path('generate_flashcards/', views.generate_flashcards, name='generate_flashcards'),
     path('update_flashcard/', views.update_flashcard, name='update_flashcard'),
     path('delete_flashcard/', views.delete_flashcard, name='delete_flashcard'),
+    path('load_messages/', views.load_message, name='load_messages'),
+    path('send_message/', views.send_message, name='send_message'),
+    path('clear_messages/', views.clear_messages, name='clear_messages'),
 ]
 
 urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
