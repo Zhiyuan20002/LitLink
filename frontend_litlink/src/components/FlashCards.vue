@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import {onMounted, ref} from 'vue';
+import {onMounted, ref, watch} from 'vue';
 import {message} from 'ant-design-vue';
 import {
   SmileOutlined,
@@ -12,6 +12,8 @@ import {
   DeleteTwoTone,
 } from '@ant-design/icons-vue';
 import type {SelectProps} from 'ant-design-vue';
+import {useHighlightStore} from '../store/store';
+import axios from 'axios';
 
 const summary = ref('This is a summary of the paper');
 
@@ -65,6 +67,12 @@ const props = defineProps({
     required: true,
   },
 });
+
+const highlightStore = useHighlightStore();
+
+const truncateTitle = (title: string, maxLength: number = 50) => {
+  return title.length > maxLength ? `${title.slice(0, maxLength)}...` : title;
+};
 
 // 初始化加载FlashCards和Summary
 onMounted(async () => {
@@ -198,6 +206,11 @@ const generateFlashcards = async () => {
 
       console.log(historyHighlights);
 
+      for (let i = 0; i < textHighlights.value.length; i++) {
+        highlightStore.addAIHighlight(textHighlights.value[i].content);
+      }
+      highlightStore.setAIHighlightsFlag(true);
+
       message.success('Flashcards generated successfully.');
     } else {
       message.error('Failed to generate flashcards.');
@@ -262,7 +275,47 @@ const updateFlashcard = async (flashcardId, status, note, ai_analysis) => {
   }
 };
 
+// 监听 highlightStore 中的 highlights 列表
+watch(
+    () => highlightStore.highlights,
+    async (newHighlights) => {
 
+      if (newHighlights.length > 0) {
+        // 获取新增的高亮文本
+        const newHighlightText = newHighlights[newHighlights.length - 1];
+        isGenerating.value = true;
+
+        try {
+          // 向后端发送请求，创建新的高亮卡片
+          const response = await axios.post('http://localhost:8000/main/create_flashcard/', {
+            paper_id: props.chosenPaper.key,
+            highlight_text: newHighlightText,
+          });
+
+          if (response.status === 201) { // 检查状态码是否为 201（成功创建）
+            // 从后端响应中获取新的高亮卡片和历史卡片数据
+            const {new_flashcards, history_flashcards} = response.data;
+            console.log(new_flashcards);
+            console.log(history_flashcards);
+            // 更新 textHighlights 和 historyHighlights 数据
+            textHighlights.value = [...textHighlights.value, ...new_flashcards];
+            historyHighlights.value = [...historyHighlights.value, ...history_flashcards];
+            // 从 highlightStore 中移除已处理的高亮文本
+            highlightStore.removeHighlight(newHighlightIndex);
+            message.success('New highlight card created successfully.');
+          } else {
+            console.error('Unexpected response status:', response.status);
+          }
+        } catch (error) {
+          console.error('Failed to create new highlight card:', error);
+        }
+
+        isGenerating.value = false;
+
+      }
+    },
+    {deep: true}
+);
 
 </script>
 
@@ -291,8 +344,12 @@ const updateFlashcard = async (flashcardId, status, note, ai_analysis) => {
       <a-collapse-panel
           v-for="(item) in textHighlights"
           :key="item.number"
-          :header="item.title"
           class="custom-panel">
+        <template #header>
+          <a-tooltip :title="item.title">
+            {{ truncateTitle(item.title) }}
+          </a-tooltip>
+        </template>
         <template #extra>
           <a-popconfirm
               :showCancel="false"
@@ -334,6 +391,7 @@ const updateFlashcard = async (flashcardId, status, note, ai_analysis) => {
               v-model:value="item.AIAnalysis"
               show-count
               size="small"
+              @blur="updateFlashcard(item.number, item.status, item.Notes, item.AIAnalysis)"
               :rows="3"/>
         </div>
 
@@ -346,7 +404,7 @@ const updateFlashcard = async (flashcardId, status, note, ai_analysis) => {
               v-model:value="item.Notes"
               show-count
               size="small"
-              @blur="updateFlashcard(item.number, item.Status, item.Notes, item.AIAnalysis)"
+              @blur="updateFlashcard(item.number, item.status, item.Notes, item.AIAnalysis)"
               :rows="2"/>
         </div>
 
@@ -366,8 +424,12 @@ const updateFlashcard = async (flashcardId, status, note, ai_analysis) => {
           <a-collapse-panel
               v-for="historyItem in historyHighlights.filter(h => item.history_related.includes(h.number))"
               :key="historyItem.number"
-              :header="historyItem.title"
               class="history-panel">
+            <template #header>
+              <a-tooltip :title="historyItem.title">
+                {{ truncateTitle(historyItem.title) }}
+              </a-tooltip>
+            </template>
             <template #extra>
               <a-popconfirm
                   :showCancel="false"
@@ -400,10 +462,10 @@ const updateFlashcard = async (flashcardId, status, note, ai_analysis) => {
                 <PaperClipOutlined/>
                 {{ historyItem.relatedTo }}
               </div>
-<!--              <a-button type="text" style="color: #5A54F9">-->
-<!--                <BookOutlined/>-->
-<!--                Open This Paper-->
-<!--              </a-button>-->
+              <!--              <a-button type="text" style="color: #5A54F9">-->
+              <!--                <BookOutlined/>-->
+              <!--                Open This Paper-->
+              <!--              </a-button>-->
             </div>
 
             <div style="margin-top: 16px">
@@ -415,6 +477,7 @@ const updateFlashcard = async (flashcardId, status, note, ai_analysis) => {
                   v-model:value="historyItem.AIAnalysis"
                   show-count
                   size="small"
+                  @blur="updateFlashcard(historyItem.number, historyItem.status, historyItem.Notes, historyItem.AIAnalysis)"
                   :rows="3"/>
             </div>
 
@@ -427,6 +490,7 @@ const updateFlashcard = async (flashcardId, status, note, ai_analysis) => {
                   v-model:value="historyItem.Notes"
                   show-count
                   size="small"
+                  @blur="updateFlashcard(historyItem.number, historyItem.status, historyItem.Notes, historyItem.AIAnalysis)"
                   :rows="2"/>
             </div>
 

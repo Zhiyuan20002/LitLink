@@ -13,7 +13,7 @@ from django.core.files.storage import default_storage
 from django.http import StreamingHttpResponse
 import fitz
 from . import llm_process
-from .models import PdfDocument, FlashCard, User, ChatMessage
+from .models import PdfDocument, FlashCard, User, ChatMessage, Highlight
 from django.shortcuts import get_object_or_404
 from django.utils.decorators import sync_and_async_middleware
 
@@ -290,14 +290,10 @@ def build_related_to(flashcard_id):
         # 如果相似度大于阈值且不在当前列表中，则添加到 related_to 列表中
         if similarity >= similarity_threshold and other_flashcard.flashcard_id not in this_related_to:
             this_related_to.append(str(other_flashcard.flashcard_id))
-            print(f"Similarity: {similarity}")
-            print(f"Related to: {this_related_to}")
 
             # 更新对方的 related_to 列表，添加当前 flashcard_id
             if flashcard.flashcard_id not in other_flashcard.related_to:
                 other_related_to = other_flashcard.related_to
-                print(f"INFO: Updating related_to for {other_flashcard.title}")
-                print(f"Related to: {other_flashcard.related_to}")
                 other_related_to.append(str(flashcard.flashcard_id))
                 other_flashcard.related_to = other_related_to
                 other_flashcard.save()
@@ -464,6 +460,7 @@ def send_message(request):
         message_text = data.get('messages')
         document_id = data.get('document_id')
         agent = data.get('agent')
+        diving = data.get('diving')
 
         pdf_document = PdfDocument.objects.get(paper_id=document_id)
         file_name = pdf_document.pdf_file
@@ -481,32 +478,54 @@ def send_message(request):
         ]
         user = User.objects.get(username="you")  # Example user; modify for actual authentication
 
-        user_message = {
-            'role': 'user',
-            'content': message_text,
-        }
+        if diving is False:
+            user_message = {
+                'role': 'user',
+                'content': message_text,
+            }
+            # 获取或创建消息记录
+            chat_message, created = ChatMessage.objects.get_or_create(
+                pdf_document=pdf_document,
+                from_user=user,
+                defaults={'content': [user_message], 'timestamp': timezone.now()}
+            )
 
-        # 获取或创建消息记录
-        chat_message, created = ChatMessage.objects.get_or_create(
-            pdf_document=pdf_document,
-            from_user=user,
-            defaults={'content': [user_message], 'timestamp': timezone.now()}
-        )
+            if not created:
+                chat_message.content.append(user_message)
+                chat_message.timestamp = timezone.now()
+                chat_message.save()
 
-        if not created:
-            chat_message.content.append(user_message)
-            chat_message.timestamp = timezone.now()
-            chat_message.save()
+            all_content = copy.deepcopy(chat_message.content)
+            print(f"INFO: Init content: {all_content}")
 
-        # 准备传给 AI 的消息上下文
-        all_content = copy.deepcopy(chat_message.content)
-        print(f"INFO: All content: {all_content}")
-        # 将content中所有的非user角色消息的名称替换为system并把新的消息内容存储到all_content中
+        else:
+            user_message = {
+                'role': 'system',
+                'content': message_text,
+            }
+            # 获取或创建消息记录
+            chat_message, created = ChatMessage.objects.get_or_create(
+                pdf_document=pdf_document,
+                from_user=user,
+                defaults={'content': [], 'timestamp': timezone.now()}
+            )
+
+            all_content = copy.deepcopy(chat_message.content)
+            all_content.append(user_message)
+
+        print(f"INFO: Init content: {all_content}")
+        # 在content中所有的非user角色的消息前加上“角色：”备注，然后将非user名称替换为system并把新的消息内容存储到all_content中
         for contents in all_content:
             if contents['role'] != 'user':
-                contents['role'] = 'system'
+                if contents['role'] != agent:
+                    contents['content'] = f"这是智能体“{contents['role']}”的发言: {contents['content']}"
+                    contents['role'] = 'system'
+                else:
+                    contents['role'] = 'assistant'
+            else:
+                contents['content'] = f"{contents['content']}"
 
-        print(f"INFO: New content: {chat_message.content}")
+        print(f"INFO: Input content: {all_content}")
 
         ai_response_content = ""
 
@@ -521,7 +540,7 @@ def send_message(request):
             chat_message.content.append(ai_message)
             chat_message.timestamp = timezone.now()
             chat_message.save()
-            print(f"{chat_message.content}")
+            print(f"INFO: Output Content: {chat_message.content}")
 
         response = StreamingHttpResponse(ai_response_generator(), content_type="text/event-stream")
         response['Cache-Control'] = 'no-cache'
@@ -567,5 +586,92 @@ def clear_messages(request):
             return JsonResponse({'message': 'Messages cleared successfully'}, status=200)
         except PdfDocument.DoesNotExist:
             return JsonResponse({'error': 'Document not found'}, status=404)
+
+    return JsonResponse({'error': 'Invalid request method'}, status=400)
+
+
+@csrf_exempt
+def get_flashcard_highlights(request, paper_id):
+    if request.method == 'GET':
+        # 获取对应的 PdfDocument 对象
+        pdf_document = get_object_or_404(PdfDocument, paper_id=paper_id)
+        print(f"INFO: Getting flashcard highlights for {pdf_document.name}")
+
+        # 获取 flashcard 内容并提取 content 字段
+        flashcards = pdf_document.flashcards.all().values_list('content', flat=True)  # 直接获取 content 字段为纯字符串列表
+        flashcard_contents = [content for content in flashcards if content]  # 确保每个内容非空
+        print(f"INFO: Flashcard Contents: {flashcard_contents}")
+
+        # 返回纯字符串列表
+        return JsonResponse({'flashcard_contents': flashcard_contents}, status=200)
+    else:
+        return JsonResponse({'error': 'Invalid request method'}, status=400)
+
+
+@csrf_exempt
+def create_flashcard(request):
+    if request.method == 'POST':
+        data = json.loads(request.body)
+        paper_id = data.get("paper_id")
+        highlight_text = data.get("highlight_text")
+
+        pdf_document = get_object_or_404(PdfDocument, paper_id=paper_id)
+
+        # 调用生成 flashcard 的方法并获取生成结果
+        file_name = str(pdf_document.pdf_file)
+        file_path = os.path.join(settings.MEDIA_ROOT, 'paper_file', file_name)
+        flashcards_ai_analysis = llm_process.analyzer_flashcard(file_path, highlight_text)
+        embeddings = llm_process.get_embeddings(highlight_text)
+
+        # 创建 FlashCard 实例
+        flashcard = FlashCard.objects.create(
+            pdf_document=pdf_document,
+            title=highlight_text,
+            content=highlight_text,
+            status='READING',  # 默认状态
+            highlight_by='YOU',  # 假设高亮者为 AI
+            notes="",
+            ai_analysis=flashcards_ai_analysis,
+            related_to=[],  # 默认为空列表
+            feature_data=embeddings
+        )
+
+        this_related_to = build_related_to(flashcard.flashcard_id)
+        flashcard.related_to = this_related_to
+        flashcard.save()
+
+        history_flashcards = []
+
+        # 通过related_to找到历史高亮卡片
+        for related_id in this_related_to:
+            related_id = UUID(related_id)
+            related_flashcard = get_object_or_404(FlashCard, flashcard_id=related_id)
+            history_flashcards.append({
+                'number': related_flashcard.flashcard_id,
+                'title': related_flashcard.title,
+                'content': related_flashcard.content,
+                'status': related_flashcard.status,
+                'highlightBy': related_flashcard.highlight_by,
+                'Notes': related_flashcard.notes,
+                'AIAnalysis': related_flashcard.ai_analysis,
+                'relatedTo': related_flashcard.pdf_document.name,
+                'pdfNo': os.path.join("http://localhost:8000", "media", "paper_file",
+                                      str(related_flashcard.pdf_document.pdf_file)),
+            })
+
+        new_flashcards = [{
+            'number': flashcard.flashcard_id,
+            'title': flashcard.title,
+            'content': flashcard.content,
+            'status': flashcard.status,
+            'highlightBy': flashcard.highlight_by,
+            'Notes': '',
+            'AIAnalysis': flashcard.ai_analysis,
+            'history_related': flashcard.related_to,
+            'activeKey': ['0'],
+        }]
+
+        return JsonResponse({'message': 'Flashcard created successfully', 'new_flashcards': new_flashcards,
+                             'history_flashcards': history_flashcards}, status=201)
 
     return JsonResponse({'error': 'Invalid request method'}, status=400)

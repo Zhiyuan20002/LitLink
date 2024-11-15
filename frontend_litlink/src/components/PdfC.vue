@@ -34,15 +34,18 @@
 </template>
 
 <script setup lang="ts">
-import {
-  HighlightOutlined,
-} from '@ant-design/icons-vue';
+import {HighlightOutlined,} from '@ant-design/icons-vue';
 
-import {reactive, onMounted, ref} from "vue";
+import {nextTick, onMounted, reactive, ref, watch} from "vue";
 import VuePdfEmbed from "vue-pdf-embed";
 import {createLoadingTask} from "vue3-pdfjs";
 // 引入 pdfjs 库和 worker 文件
 import * as pdfjsLib from 'pdfjs-dist';
+import {message} from "ant-design-vue";
+import {useHighlightStore} from '../store/store';
+import axios from "axios";
+
+const highlightStore = useHighlightStore();
 
 // 设置 PDF.js 使用 Web Worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
@@ -63,25 +66,211 @@ const state = reactive({
   highlightedTexts: [] as { pageNum: number; text: string }[],
 });
 
+const highlightData = ref([]); // 用于存储高亮数据
 const loadingProgress = ref(0);  // 用于跟踪加载进度
 const totalPages = ref(0);  // 总页数
 const pdfContainer = ref<HTMLElement | null>(null);
 
 // 初始化加载 PDF
 onMounted(async () => {
-  const loadingTask = createLoadingTask(state.source);
-  loadingTask.onProgress = (progressData) => {
-    loadingProgress.value = Math.round((progressData.loaded / progressData.total) * 100);
-  };
-  const pdf = await loadingTask.promise;
-  state.numPages = pdf.numPages;
-  totalPages.value = pdf.numPages;
-  loadingProgress.value = 100;
+
+  // 向后端请求高亮数据
+  try {
+    // 向后端发送请求获取该文档的flashcard高亮内容
+    const response = await fetch(`http://localhost:8000/main/get_flashcard_highlights/${props.chosenPaper.key}/`, {
+      method: 'GET',
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      highlightData.value = data.flashcard_contents;
+      message.success("Flashcard highlights loaded successfully.");
+    } else {
+      message.error("Failed to load flashcard highlights.");
+    }
+  } catch (error) {
+    message.error("Error loading flashcard highlights.");
+    console.error("Fetch error:", error);
+  }
+
+  // 创建加载任务
+  await nextTick(() => {
+    if (!pdfContainer.value) return;
+    const loadingTask = createLoadingTask(state.source);
+    loadingTask.onProgress = (progressData) => {
+      loadingProgress.value = Math.round((progressData.loaded / progressData.total) * 100);
+    };
+
+    onPageRendered(state.pageNum);
+    loadingTask.promise.then((pdf) => {
+      state.numPages = pdf.numPages;
+      totalPages.value = pdf.numPages;
+      loadingProgress.value = 100;
+    });
+  });
+
 });
 
 // 在页面渲染时更新当前页码
-function onPageRendered(page) {
-  updatePageNum(page);
+function onPageRendered(pageNumber) {
+  console.log(`Page ${pageNumber} rendered.`);
+  nextTick(() => {
+    setTimeout(() => {
+      applyHighlight(); // 页面渲染后重新应用高亮
+      applyHighlightsFromData(pageNumber);
+    }, 500);
+  });
+}
+
+function applyHighlightsFromData(pageNumber) {
+  console.log(`Applying highlights for page ${pageNumber}`);
+  const textLayers = pdfContainer.value?.querySelectorAll(".textLayer");
+
+  if (!textLayers || textLayers.length === 0) {
+    console.warn("Text layers not found");
+    return;
+  }
+  const textLayer = textLayers[pageNumber - 1];
+  if (!textLayer) {
+    console.warn(`Text layer for page ${pageNumber} not found`);
+    return;
+  }
+  const spans = Array.from(textLayer.querySelectorAll("span"));
+  if (spans.length === 0) {
+    console.warn(`Text layer for page ${pageNumber} not yet populated, retrying...`);
+    setTimeout(() => applyHighlightsFromData(pageNumber), 100);
+    return;
+  }
+  processSpansForHighlighting(spans);
+}
+
+function processSpansForHighlighting(spans: HTMLSpanElement[]) {
+  interface SpanData {
+    text: string;
+    element: HTMLSpanElement;
+    start: number;
+    end: number;
+  }
+
+  let spansData: SpanData[] = [];
+  let originalFullText = '';
+  let normalizedFullText = '';
+  let indexMap: number[] = []; // 映射 normalizedFullText 的索引到 originalFullText
+  let originalIndex = 0;
+
+  // *originfulltext中有些span之间需要加上空格，否则无法匹配
+  for (let i = 0; i < spans.length; i++) {
+    const span = spans[i];
+    let spanText = span.textContent || '';
+    const spanLength = spanText.length;
+    const endsWithHyphen = /-$/.test(spanText);
+    // 如果存在短横，设置标记并去掉短横
+    if (endsWithHyphen) {
+      spanText = spanText.slice(0, -1); // 去掉结尾的 "-"
+    }
+
+
+    spansData.push({
+      text: spanText,
+      element: span,
+      start: originalIndex,
+      end: originalIndex + spanLength,
+    });
+
+    for (let j = 0; j < spanText.length; j++) {
+      const char = spanText[j];
+      originalFullText += char;
+
+      if (/\s/.test(char)) {
+        // 将空白字符替换为单个空格
+        normalizedFullText += ' ';
+      } else {
+        normalizedFullText += char;
+      }
+
+      // 记录映射关系
+      indexMap.push(originalIndex);
+      originalIndex++;
+    }
+    //console.log(`${normalizedFullText}`)
+    // 检查是否需要在当前 span 和下一个 span 之间插入空格
+    // 如果前一span的最后不是空白字符(空格等)，后一span的开头不是空白字符，则插入空格
+    if (i < spans.length - 1) {
+      const nextSpanText = spans[i + 1].textContent || '';
+      //const currentEndsWithSpace = /[\s-]$/.test(spanText);
+      const nextStartsWithSpace = /^\s/.test(nextSpanText);
+      if (endsWithHyphen) {
+        //normalizedFullText = normalizedFullText.slice(0, -1);
+      } else if (!nextStartsWithSpace) {
+        // 在 normalizedFullText 中插入空格
+        normalizedFullText += ' ';
+        // 在 indexMap 中添加映射（映射到当前 originalIndex，没有增加 originalIndex）
+        indexMap.push(originalIndex - 1);
+      }
+    }
+  }
+
+  const lowerNormalizedFullText = normalizedFullText.toLowerCase();
+  const normalizedHighlightData = highlightData.value.map((str) =>
+      str.replace(/\s+/g, ' ').trim().toLowerCase()
+  );
+
+  normalizedHighlightData.forEach((highlightStr) => {
+    const escapedHighlightStr = escapeRegExp(highlightStr);
+    const pattern = escapedHighlightStr.replace(/ /g, '\\s+');
+    const regex = new RegExp(pattern, 'giu');
+
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(lowerNormalizedFullText)) !== null) {
+      const matchStartInNormalized = match.index;
+      const matchEndInNormalized = regex.lastIndex;
+
+      const matchStart = indexMap[matchStartInNormalized];
+      const matchEnd = indexMap[matchEndInNormalized - 1] + 1;
+
+      // 查找涉及的 spans
+      const involvedSpans = spansData.filter((spanData) => {
+        return spanData.end > matchStart && spanData.start < matchEnd;
+      });
+
+      involvedSpans.forEach((spanData) => {
+        const span = spanData.element;
+        const spanText = spanData.text;
+        const spanStart = spanData.start;
+        const spanEnd = spanData.end;
+
+        // 计算匹配在当前 span 中的起始和结束索引
+        const overlapStart = Math.max(spanStart, matchStart);
+        const overlapEnd = Math.min(spanEnd, matchEnd);
+
+        const spanMatchStart = overlapStart - spanStart;
+        const spanMatchEnd = overlapEnd - spanStart;
+
+        // 获取原始文本（保持大小写）
+        const originalSpanText = spanText;
+
+        const beforeText = escapeHTML(originalSpanText.substring(0, spanMatchStart));
+        const matchText = escapeHTML(originalSpanText.substring(spanMatchStart, spanMatchEnd));
+        const afterText = escapeHTML(originalSpanText.substring(spanMatchEnd));
+
+        // 更新 innerHTML
+        span.innerHTML = `${beforeText}<span class="highlight">${matchText}</span>${afterText}`;
+      });
+    }
+  });
+}
+
+function escapeRegExp(string: string): string {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function escapeHTML(text: string): string {
+  return text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
 }
 
 // 滚动事件中更新当前页码
@@ -91,6 +280,7 @@ function handleScroll() {
     const newPageNum = Math.ceil((pdfContainer.value.scrollTop - 300) / pageHeight) + 1;
     if (newPageNum !== state.pageNum) {
       updatePageNum(newPageNum);
+      onPageRendered(state.pageNum);
     }
   }
 }
@@ -115,97 +305,35 @@ function applyHighlight() {
 function highlightSelectedText(selection: Selection) {
   const textLayer = pdfContainer.value?.querySelector(".textLayer");
   if (!textLayer) return;
+  // 对文本进行正则化处理，去掉换行符与单词连接符
+  let normalizedText = selection.toString().replace(/\s+/g, ' ').trim();
+  // 遇到连字符+换行符的情况，将其替换""
+  normalizedText = normalizedText.replace(/-\s+|\s+-/g, '');
+  console.log("Selected text:", normalizedText);
 
-  const range = selection.getRangeAt(0);
-  const spans = Array.from(textLayer.querySelectorAll("span"));
+  highlightData.value.push(normalizedText);
 
-  let highlighting = false;
-  let combinedText = ""; // 存储组合的高亮文本
-  const highlightedTexts: { pageNum: number; text: string }[] = []; // 存储高亮文本信息
+  highlightStore.addHighlight(normalizedText);
+  console.log("Updated highlights in store:", highlightStore.highlights);
 
-  // 创建转义特殊符号的函数
-  const escapeHTML = (text: string) => {
-    return text
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#39;");
-  };
-
-  // 构建一个批量更新的高亮 HTML 映射，键为 span，值为修改后的内容
-  const spanHTMLMap = new Map<HTMLElement, string>();
-
-  for (const span of spans) {
-    if (!range.intersectsNode(span)) continue;
-
-    const spanText = span.textContent || "";
-
-    if (span === range.startContainer.parentNode) {
-      const startIndex = range.startOffset;
-      const highlightText = spanText.substring(startIndex);
-
-      highlightedTexts.push({
-        pageNum: state.pageNum,
-        text: highlightText.trim(),
-      });
-
-      combinedText += highlightText.trim() + " ";
-      spanHTMLMap.set(
-          span,
-          escapeHTML(spanText).replace(
-              escapeHTML(highlightText),
-              `<span class="highlight">${escapeHTML(highlightText)}</span>`
-          )
-      );
-
-      highlighting = true;
-    } else if (span === range.endContainer.parentNode) {
-      const endIndex = range.endOffset;
-      const highlightText = spanText.substring(0, endIndex);
-
-      combinedText += highlightText.trim();
-      highlightedTexts.push({
-        pageNum: state.pageNum,
-        text: highlightText.trim(),
-      });
-
-      spanHTMLMap.set(
-          span,
-          escapeHTML(spanText).replace(
-              escapeHTML(highlightText),
-              `<span class="highlight">${escapeHTML(highlightText)}</span>`
-          )
-      );
-
-      highlighting = false;
-      break; // 结束循环，避免多余的遍历
-    } else if (highlighting) {
-      combinedText += spanText.trim() + " ";
-      highlightedTexts.push({
-        pageNum: state.pageNum,
-        text: spanText.trim(),
-      });
-      spanHTMLMap.set(span, `<span class="highlight">${escapeHTML(spanText)}</span>`);
-    }
-  }
-
-  // 批量更新 DOM，减少对 innerHTML 的多次操作
-  spanHTMLMap.forEach((html, span) => {
-    span.innerHTML = html;
-  });
-
-  // 一次性更新状态，减少频繁访问
-  state.combine.push(combinedText.trim());
-  state.highlightedTexts.push(...highlightedTexts);
+  onPageRendered(state.pageNum);
 }
 
-// 卡片前后端功能
-// 新高亮内容
-const newHighlight = ref('');
-
-// 先在前端push到state的highlight中向后端发送保存高亮请求，后端保存高亮并根据高亮新建学习卡片，然后刷新flashcard界面的卡片内容
-
+watch(
+    () => highlightStore.aiHighlights_flag,
+    async (aiHighlights_flag) => {
+      if (aiHighlights_flag) {
+        // 获取新增的高亮文本
+        const newHighlightText = highlightStore.aiHighlights;
+        console.log("New AI highlights:", newHighlightText);
+        highlightData.value = [...highlightData.value, ...newHighlightText];
+        highlightStore.clearAIHighlights();
+        highlightStore.aiHighlights_flag = false;
+        onPageRendered(state.pageNum);
+      }
+    },
+    {deep: true}
+);
 
 </script>
 

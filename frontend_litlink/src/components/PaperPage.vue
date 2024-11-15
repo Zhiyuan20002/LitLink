@@ -556,7 +556,7 @@ const cancelUpload = async () => {
             </template>
             <template #headerCell="{ column }">
               <template v-if="column.key === 'name'">
-                <span style="color: #556B2F">Paper Title</span>
+                <span style="color: #5A54F9">Paper Title</span>
               </template>
             </template>
             <template #bodyCell="{ column, record }">
@@ -658,7 +658,7 @@ const cancelUpload = async () => {
                 <a-tab-pane key="2">
                   <template #tab>
                     <CommentOutlined/>
-                    Chat with the Author
+                    Group Chat
                   </template>
                   <div class="tab_content">
                     <GroupChat :avatarUrl="avatarUrl" :chosenPaper="chosenPaper"/>

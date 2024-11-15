@@ -22,6 +22,8 @@ urlpatterns = [
     path('load_messages/', views.load_message, name='load_messages'),
     path('send_message/', views.send_message, name='send_message'),
     path('clear_messages/', views.clear_messages, name='clear_messages'),
+    path('get_flashcard_highlights/<str:paper_id>/', views.get_flashcard_highlights, name='get_flashcard_highlights'),
+    path('create_flashcard/', views.create_flashcard, name='create_flashcard'),
 ]
 
 urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
